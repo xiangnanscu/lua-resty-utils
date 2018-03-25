@@ -13,7 +13,7 @@ local cat = table.concat
 local sub = string.sub
 local rep = string.rep
 
-local version = '1.1'
+local version = '1.2'
 
 local function warn(s)
     ngx.log(ngx.WARN, s)
@@ -92,15 +92,10 @@ local function filter(tbl, func)
     end
     return res
 end
-local function list(a, b)
+local function list(...)
     local t = {}
-    if a then
-        for k, v in ipairs(a) do
-            t[#t+1] = v
-        end
-    end
-    if b then
-        for k, v in ipairs(b) do
+    for i, a in pairs{...} do
+        for _, v in ipairs(a) do
             t[#t+1] = v
         end
     end
@@ -120,37 +115,30 @@ local function list_has(t, e)
     end
     return false
 end
-local function dict(a, b)
+local function dict(...)
     local t = {}
-    if a then
+    for i, a in pairs{...} do
         for k, v in pairs(a) do
             t[k] = v
         end
     end
-    if b then
-        for k, v in pairs(b) do
-            t[k] = v
-        end
-    end            
     return t
 end
 local function dict_update(t, a)
-    if a then
-        for k, v in pairs(a) do
-            t[k] = v
-        end
+    for k, v in pairs(a) do
+        t[k] = v
     end
     return t
 end
 local function dict_has(t, e)
     for k, v in pairs(t) do
         if v == e then
-            return true
+            return true, k
         end
     end
     return false
 end
-local function string_strip(value)
+local function strip(value)
     return (ngx_re_gsub(value, [[^\s*(.+)\s*$]], '$1', 'jo'))
 end
 local function is_empty_value(value)
@@ -612,7 +600,7 @@ return {
     dict_has = dict_has,
     list_has = list_has,
     to_html_attrs = to_html_attrs, 
-    string_strip = string_strip, 
+    strip = strip, 
     is_empty_value = is_empty_value, 
     dict_update = dict_update, 
     list_extend = list_extend, 
