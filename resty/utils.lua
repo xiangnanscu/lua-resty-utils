@@ -17,8 +17,30 @@ do
     if not o then o, l = pcall(require, "lfs") end
     if o then lfs = l end
 end
+local ok, repr = pcall(require, "resty.repr")
 
+local version = '1.1'
 local is_windows = package.config:sub(1,1) == '\\'
+
+local function copy(v)
+    local visited = {}
+    local function f(orig)
+        local orig_type = type(orig)
+        local ret
+        if orig_type == 'table' and not visited[orig] then
+            ret = {}
+            visited[orig] = true
+            for k, v in pairs(orig) do
+                ret[f(k)] = f(v)
+            end
+            setmetatable(ret, f(getmetatable(orig)))
+        else -- number, string, boolean, etc
+            ret = orig
+        end
+        return ret    
+    end
+    return f(v)
+end
 
 local function array(t)
     return setmetatable(t or {}, ENCODE_AS_ARRAY)
@@ -332,6 +354,7 @@ local function upvalues()
   end
   return variables
 end
+
 local function zfill(s, n, c) 
     local len = string.len(s)
     n = n or len
@@ -341,106 +364,17 @@ local function zfill(s, n, c)
     end
     return s
 end
-local ngx_log = ngx.log
-local ngx_ERR = ngx.ERR
-local MAX_DEPTH = 2
-local MAX_LENGTH = 10
-local function add_right_space(num)
-    local res = ''
-    for i=1, num or 1 do
-        res = res..' '
-    end
-    return res
-end
 
-local function simple(k)
-    if type(k) == 'string' then 
-        -- **
-        k = k:gsub('"', '\\"')
-        k = k:gsub('\n', '\\n')
-        k = k:gsub('\r', '\\r')
-        k = k:gsub('\t', '\\t')
-        return  '"'..k..'"'
-    elseif type(k) == 'number' then 
-        return tostring(k)
-    else -- nil, true, false
-        return '"'..tostring(k)..'"'
-    end
-end   
-local function raw_tostring(obj)
-    if type(obj) == 'table' then
-        local mt = getmetatable(obj)
-        setmetatable(obj, nil)
-        local res = tostring(obj)
-        setmetatable(obj, mt)
-        return res
-    else
-        return tostring(obj)
-    end
-end
-local function _repr(obj, max_depth, ind, deep, already)
-    local label = type(obj)
-    if label == 'table' then
-        local res = {}
-        local normalize = {}
-        local indent = '  '..ind
-        local table_key = raw_tostring(obj)
-        local max_key_len = 0
-        for k,v in pairs(obj) do
-            k = simple(k)
-            local k_len = string.len(k)
-            if k_len>max_key_len then
-                max_key_len = k_len
-            end
-        end
-        if max_key_len>MAX_LENGTH then
-            max_key_len = MAX_LENGTH
-        end
-        if table_key ~= nil then -- todo why this is needed
-            already[table_key] = table_key
-        end
-        for k,v in pairs(obj) do
-            k = simple(k)
-            if type(v) == 'table' then
-                local key = raw_tostring(v)
-                if next(v) == nil then
-                    v = '{}'
-                elseif already[key] then
-                    v = simple(key)
-                elseif deep > max_depth then
-                    v = simple('*exceed max deepth*')
-                else
-                    v = '{\\\\'..(raw_tostring(v) or '').._repr(v, max_depth, indent..add_right_space(max_key_len+3), deep+1, already)
-                end
-            else
-                v = simple(v)
-            end
-            normalize[k] = v --string.format('\n%s%s: %s,', indent, k, v)
-        end 
-        for k, v in sorted(normalize) do
-            res[#res+1] = string.format('\n%s%s: %s,', indent, zfill(k, max_key_len), v)
-        end
-        return table.concat(res)..'\n'..add_right_space(string.len(indent)-2)..'}'         
-    else
-        return simple(obj)
-    end
-end
-
-local function repr(obj, max_depth)
-    max_depth = max_depth or MAX_DEPTH
-    if type(obj)  == 'table' then
-        return '{\\\\'..raw_tostring(obj).._repr(obj, max_depth, '', 1, {})
-    else
-        return simple(obj)
-    end
+local function writefile(s, name)
+    name = name or string.format('debug/%s.js',os.date("%Y-%m-%d %H:%M:%S", os.time()))
+    assert(io.open(name,'a+')):write(s):close()
 end
 local function loger(...)
-    local delimiter = '***************************'
     local res = {}
     for i,v in ipairs({...}) do
         res[i] = repr(v)
     end
-    ngx_log(ngx_ERR,string.format('\n%s\n%s\n%s', delimiter, table.concat(res, " "), delimiter))
+    writefile(table.concat(res, "\n/*************************************/\n"))
 end
 local function debugger(e) 
     return debug.traceback()..e 
@@ -451,7 +385,26 @@ local enc = ok and cjson.encode or function() return nil, "Lua cJSON encoder not
 local cat = table.concat
 local sub = string.sub
 local rep = string.rep
+local function clean(t)
+    local visited = {}
+    local function f(t)
+        if not visited[t] then
+            visited[t] = true
+            for k, v in pairs(t) do
+                local e = type(v)
+                if e == 'table' then
+                    f(v)
+                elseif not (e=='number' and e=='string' and e=='boolean') then
+                    t[k] = tostring(v)
+                end
+            end
+        end
+        return t
+    end
+    return f(t)
+end
 local function pjson(dt, lf, id, ac, ec)
+    dt = clean(dt)
     local s, e = (ec or enc)(dt)
     if not s then return s, e end
     lf, id, ac = lf or "\n", id or "\t", ac or " "
@@ -621,31 +574,9 @@ end
 local READONLY_TABLE = setmetatable({}, 
     {__newindex=function(t, k, v) error('this table is readonly') end})
 
-function deepcopy(orig)
-    local already = {}
-    local function f(orig)
-        local orig_type = type(orig)
-        local copy
-        if orig_type == 'table' then
-            if already[orig] then
-                return orig
-            end
-            copy = {}
-            for orig_key, orig_value in next, orig, nil do
-                copy[f(orig_key)] = f(orig_value)
-            end
-            setmetatable(copy, f(getmetatable(orig)))
-            already[copy] = true
-        else -- number, string, boolean, etc
-            copy = orig
-        end
-        return copy    
-    end
-    return f(orig)
-end
 
 return {
-    copy = deepcopy,
+    copy = copy,
     slice = slice,
     array = array,
     map = map, 
