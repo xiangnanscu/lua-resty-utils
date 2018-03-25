@@ -1,5 +1,3 @@
-local ENCODE_AS_ARRAY = require "cjson".empty_array_mt 
--- ** why require "cjson.safe".empty_array_mt not work
 local type = type
 local pairs = pairs
 local next = next
@@ -11,15 +9,47 @@ local string_format = string.format
 local ngx_re_gsub = ngx.re.gsub
 local ngx_re_match = ngx.re.match
 local ngx_time = ngx.time
+local cat = table.concat
+local sub = string.sub
+local rep = string.rep
+
+local version = '1.1'
+
+local function warn(s)
+    ngx.log(ngx.WARN, s)
+end
+
+local ok, cjson_safe = pcall(require, "cjson.safe")
+if not ok then
+    warn('cjson.safe module not found')
+end
+local enc = ok and cjson_safe.encode or function() return nil, "Lua cJSON encoder not found" end
+
 local lfs
 do
     local o, l = pcall(require, "syscall.lfs")
     if not o then o, l = pcall(require, "lfs") end
     if o then lfs = l end
 end
-local ok, repr = pcall(require, "resty.repr")
+if not lfs then
+    warn('lfs module not found')
+end
 
-local version = '1.1'
+local ok, repr = pcall(require, "resty.repr")
+if ok then
+    warn('resty.repr module not found')
+end
+
+local ok, cjson = pcall(require, "cjson")
+if ok then
+    warn('cjson module not found')
+end
+local ENCODE_AS_ARRAY = {}
+if cjson then
+    ENCODE_AS_ARRAY = cjson.empty_array_mt 
+end
+-- ** why require "cjson_safe.safe".empty_array_mt not work
+
 local is_windows = package.config:sub(1,1) == '\\'
 
 local function copy(v)
@@ -380,11 +410,7 @@ local function debugger(e)
     return debug.traceback()..e 
 end
 
-local ok, cjson = pcall(require, "cjson.safe")
-local enc = ok and cjson.encode or function() return nil, "Lua cJSON encoder not found" end
-local cat = table.concat
-local sub = string.sub
-local rep = string.rep
+
 local function clean(t)
     local visited = {}
     local function f(t)
